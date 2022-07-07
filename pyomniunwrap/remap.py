@@ -15,7 +15,8 @@ import yaml
 
 def preprocess_img(src):
     '''
-    Crop the image. Only the circle area is used.
+    Crop the image to select only the circle region of interest.
+    Current setting is specific to camera and images used in the example.
 
     Input:
         src (numpy.ndarray) : Input uncropped image
@@ -33,11 +34,21 @@ class OCAM_MODEL(object):
     def __init__(self) -> None:
         pass
 
-    def rotate_image(self, img, angle, center):
-        image_center = tuple(np.array(img.shape[1::-1]) / 2)
+    def rotate_image(self, src, angle, center):
+        '''
+        Rotate the image by degrees w.r.t. center coordinate
+
+        Input:
+            src (numpy.ndarray) : Input image
+            angle (float) : Rotation angle in degrees
+            center (list[float, float]) : Rotation center pixel coordinate
+        Output:
+            result (numpy.ndarray) : Rotated image
+        '''
+        image_center = tuple(np.array(src.shape[1::-1]) / 2)
         rot_mat = cv.getRotationMatrix2D(center, angle, 1.0)
         result = cv.warpAffine(
-            img, rot_mat, img.shape[1::-1], flags=cv.INTER_CUBIC)
+            src, rot_mat, src.shape[1::-1], flags=cv.INTER_CUBIC)
         return result
 
 
@@ -46,7 +57,7 @@ class SCARA_OCAM_MODEL(OCAM_MODEL):
     Scaramuzza Ocam model
 
     The calibration is done in Matlab.
-    Calibration parameters is stored in calib_result.txt
+    Default calibration parameters is stored in scara.yaml
     '''
 
     def __init__(self, fname=""):
@@ -57,12 +68,12 @@ class SCARA_OCAM_MODEL(OCAM_MODEL):
         self.e = 0          # affine coefficient
         self.invpol = []    # inverse f function coefficients. Used in world2cam
         self.ss = []        # f function coefficients. Used in cam2world
-        self.shape = []     # img shape "height" and "width
+        self.shape = []     # img shape "height" and "width"
 
         if fname != "":
             self.read_result(fname)
 
-        self.lut_90 = None # look up table for cuboid rectify
+        self.lut_90 = None  # look up table for cuboid rectify
 
     def read_result(self, fname):
         '''
@@ -228,14 +239,14 @@ class SCARA_OCAM_MODEL(OCAM_MODEL):
             all_image (numpy.ndarray) : Concatenated image
         '''
         # Rotate to align front to the middle
-        rotated = self.rotate_image(src, 225, (scara.xc, scara.yc))
-        
+        rotated = self.rotate_image(src, 225, (self.xc, self.yc))
+
         imgs = []
 
         if not self.lut_90:
 
             # The radius of projection cylinder
-            R = min((scara.xc, scara.yc))
+            R = min((self.xc, self.yc))
             # The height of projection cylinder
             # assuming 30 degrees fov above and below horizon of lens O
             H = R * math.tan(math.radians(30)) * 2
@@ -252,7 +263,7 @@ class SCARA_OCAM_MODEL(OCAM_MODEL):
             # cv.imwrite(f"front{i}.jpg", front)
             res_90 = cv.remap(front, mapx_90, mapy_90, cv.INTER_CUBIC)
             imgs.append(res_90)
-            rotated = self.rotate_image(rotated, 90, (scara.xc, scara.yc))
+            rotated = self.rotate_image(rotated, 90, (self.xc, self.yc))
 
         all_img = np.concatenate(imgs, axis=1)
 
@@ -261,7 +272,8 @@ class SCARA_OCAM_MODEL(OCAM_MODEL):
 
 class MEI_OCAM_MODEL(object):
     '''
-    Mei Ocam model from opencv.
+    Mei Ocam model from opencv. 
+    Default calibration parameters is stored in mei.yaml
     '''
 
     def __init__(self, fname=""):
@@ -290,7 +302,7 @@ class MEI_OCAM_MODEL(object):
 
     def panoramic_rectify(self, src, new_img_size):
         '''
-        Rectify omni image into panoramic image 
+        Use opencv api to rectify omnidirectional image into panoramic image 
 
         Input:
             src (numpy.ndarray) : Input omnidirectional image 
@@ -312,29 +324,3 @@ class MEI_OCAM_MODEL(object):
         dst = cv.remap(src, map1, map2, cv.INTER_CUBIC)
 
         return dst
-
-
-if __name__ == "__main__":
-    # Example usage
-    # Note that new_image_size height and width is different due to different conventions
-
-    original_img = cv.imread("example.jpg")
-    print(f'Origianl Image has size of {original_img.shape}')
-
-    cropped = preprocess_img(original_img)
-    print(f'Cropped Image has size of {cropped.shape}')
-
-    # cv.imwrite("cropped.jpg", cropped)
-
-    scara = SCARA_OCAM_MODEL("scara.yaml")
-    mei = MEI_OCAM_MODEL("mei.yaml")
-
-    res_scara = scara.panoramic_rectify(cropped, 540, 200, (400, 1800))
-    per_images, res_scara_cuboid = scara.cuboid_rectify(cropped)
-    res_mei = mei.panoramic_rectify(cropped, (2900, 800))
-
-    cv.imwrite("scara.jpg", res_scara)
-    cv.imwrite("cuboid.jpg", res_scara_cuboid)
-    for index, img in enumerate(per_images):
-        cv.imwrite(f"perspective_{index}.jpg", img)
-    cv.imwrite("mei.jpg", res_mei)

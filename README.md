@@ -4,15 +4,30 @@ This is a python package using Scaramuzza and Mei's method to rectify omnidirect
 ## Prerequisite
 
 ```
-pip3 install opencv-python
-pip3 install opencv-contrib-python
+pip install opencv-python
+pip install opencv-contrib-python
+pip install pyyaml
 ```
 
 Make sure opencv-python and opencv-contrib-python have same version
 
-## Run
+## Usage
 
-To run
+To see and run the example, in the terminal
 ```
-$ python3 python/remap.py
+$ python example.py
+```
+or in python
+```
+import pyomniunwrap.example
+
+pyomniunwrap.example.run_example()
+```
+
+To use the calibrated model in python
+```
+import pyomniunwrap
+
+scara = pyomniunwrap.SCARA_OCAM_MODEL("path to scara.yaml")
+perspective_images, full_image = scara.cuboid_rectify(omni_image)
 ```
