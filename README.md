@@ -4,16 +4,22 @@ This is a python package using Scaramuzza and Mei's method to rectify omnidirect
 ## Prerequisite
 
 ```
-pip install opencv-python
-pip install opencv-contrib-python
-pip install pyyaml
+$ pip install opencv-python
+$ pip install opencv-contrib-python
+$ pip install pyyaml
 ```
 
-Make sure opencv-python and opencv-contrib-python have same version
+Make sure opencv-python and opencv-contrib-python have the same version
+
+## Installation
+
+```
+$ pip install pyomniunwrap
+```
 
 ## Usage
 
-To see and run the example, in the terminal
+To see and run the example in the terminal
 ```
 $ python example.py
 ```
