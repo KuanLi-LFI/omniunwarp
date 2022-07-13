@@ -34,6 +34,6 @@ To use the calibrated model in python
 ```
 import pyomniunwrap
 
-scara = pyomniunwrap.SCARA_OCAM_MODEL("path to scara.yaml")
-perspective_images, full_image = scara.cuboid_rectify(omni_image)
+res_scara, mask_scara = pyomniunwrap.panoramic_rectify(
+        original_img, model='scara', ss=ss, invpol=invpol, shape=shape, cde=cde, xy=xy)
 ```

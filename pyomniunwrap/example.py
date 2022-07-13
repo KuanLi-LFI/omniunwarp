@@ -16,6 +16,7 @@ The result of cuboid unwrap method will be saved in "cuboid.jpg" and "perspectiv
 import pyomniunwrap
 import cv2 as cv
 import pkg_resources
+import yaml
 
 
 def run_example():
@@ -33,29 +34,34 @@ def run_example():
 
     # Read the image
     original_img = cv.imread(example_image_path)
-    print(f'Origianl Image has size of {original_img.shape}')
-
-    # Crop the image to select the region of interest
-    cropped = pyomniunwrap.preprocess_img(original_img)
-    print(f'Cropped Image has size of {cropped.shape}')
 
     # Read the model parameters
-    scara = pyomniunwrap.SCARA_OCAM_MODEL(scara_yaml_path)
-    mei = pyomniunwrap.MEI_OCAM_MODEL(mei_yaml_path)
+    with open(mei_yaml_path, 'r') as f:
+        data = yaml.load(f, Loader=yaml.SafeLoader)
+    K = data['K']
+    D = data['D']
+    Xi = data['Xi']
 
-    # Scara model cylinder unwrap
-    res_scara = scara.panoramic_rectify(cropped, 540, 200, (400, 1800))
-    # Scara model cuboid unwrap
-    per_images, res_scara_cuboid = scara.cuboid_rectify(cropped)
-    # Mei model cylinder unwrap
-    res_mei = mei.panoramic_rectify(cropped, (2900, 800))
+    with open(scara_yaml_path, 'r') as f:
+        data = yaml.load(f, Loader=yaml.SafeLoader)
+    ss = data['ss']
+    invpol = data['invpol']
+    shape = data['shape']
+    cde = data['cde']
+    xy = data['xy']
 
-    # Save the unwrapped images
+    # Unwrap the images
+    res_scara, mask_scara = pyomniunwrap.panoramic_rectify(
+        original_img, model='scara', ss=ss, invpol=invpol, shape=shape, cde=cde, xy=xy)
+    masked = cv.bitwise_and(res_scara, res_scara, mask=mask_scara)
     cv.imwrite("scara.jpg", res_scara)
-    cv.imwrite("cuboid.jpg", res_scara_cuboid)
-    for index, img in enumerate(per_images):
-        cv.imwrite(f"perspective_{index}.jpg", img)
+    cv.imwrite("scara_masked.jpg", masked)
+
+    res_mei, mask_mei = pyomniunwrap.panoramic_rectify(
+        original_img, model='mei', K=K, D=D, Xi=Xi)
+    masked = cv.bitwise_and(res_mei, res_mei, mask=mask_mei)
     cv.imwrite("mei.jpg", res_mei)
+    cv.imwrite("mei_masked.jpg", masked)
 
 
 if __name__ == "__main__":

@@ -13,19 +13,6 @@ import numpy as np
 import yaml
 
 
-def preprocess_img(src):
-    '''
-    Crop the image to select only the circle region of interest.
-    Current setting is specific to camera and images used in the example.
-
-    Input:
-        src (numpy.ndarray) : Input uncropped image
-    Output:
-        dst (numpy.ndarray) : Cropped image with only omnidirectional FOV
-    '''
-    return src[80:, 310:1540]
-
-
 class OCAM_MODEL(object):
     '''
     Ocam model template
@@ -33,6 +20,46 @@ class OCAM_MODEL(object):
 
     def __init__(self) -> None:
         pass
+
+    def preprocess_img(self, src):
+        '''
+        Crop the image to select smaller region of interest.
+        Current setting is specific to camera and images used in the example.
+
+        Input:
+            src (numpy.ndarray) : Input uncropped image
+        Output:
+            dst (numpy.ndarray) : Cropped image with only omnidirectional FOV
+        '''
+        cropped = src[80:, 310:1540]
+
+        h, w, c = cropped.shape
+
+        # Erase center oval
+        mask1 = np.full((h, w), 255, dtype=np.uint8)
+        center1 = (608, 528)
+        cv.ellipse(mask1, center1, (208, 250), 0,
+                   0, 360, (0, 0, 0), thickness=-1)
+
+        # Erase wheel and red button
+        # mask0 = np.full((h, w), 255, dtype=np.uint8)
+        # cv.rectangle(mask0, (565, 770), (635, 800),
+        #              (0, 0, 0), thickness=-1)
+        # cv.rectangle(mask0, (440, 670), (500, 740),
+        #              (0, 0, 0), thickness=-1)
+        # cv.rectangle(mask0, (720, 670), (775, 752),
+        #              (0, 0, 0), thickness=-1)
+
+        # Preserve large circle
+        mask2 = np.zeros((h, w), dtype=np.uint8)
+        center2 = (600, 505)
+        cv.circle(mask2, center2, 490, (255, 255, 255), thickness=-1)
+
+        # mask = cv.bitwise_and(mask, mask1)
+        mask = cv.bitwise_and(mask1, mask2)
+        self.origin_mask = mask  # mask on circular image
+
+        return cropped, mask
 
     def rotate_image(self, src, angle, center):
         '''
@@ -48,7 +75,7 @@ class OCAM_MODEL(object):
         image_center = tuple(np.array(src.shape[1::-1]) / 2)
         rot_mat = cv.getRotationMatrix2D(center, angle, 1.0)
         result = cv.warpAffine(
-            src, rot_mat, src.shape[1::-1], flags=cv.INTER_CUBIC)
+            src, rot_mat, src.shape[1::-1], flags=cv.INTER_NEAREST)
         return result
 
 
@@ -60,7 +87,7 @@ class SCARA_OCAM_MODEL(OCAM_MODEL):
     Default calibration parameters is stored in scara.yaml
     '''
 
-    def __init__(self, fname=""):
+    def __init__(self, **kwargs) -> bool:
         self.xc = 0         # optical center row
         self.yc = 0         # optical center column
         self.c = 0          # affine coefficient
@@ -70,28 +97,20 @@ class SCARA_OCAM_MODEL(OCAM_MODEL):
         self.ss = []        # f function coefficients. Used in cam2world
         self.shape = []     # img shape "height" and "width"
 
-        if fname != "":
-            self.read_result(fname)
-
         self.lut_90 = None  # look up table for cuboid rectify
+        self.lut_pan = None  # look up table for panoramic rectify
 
-    def read_result(self, fname):
-        '''
-        Read parameters from file
-
-        Input:
-            fname (str) : path of scara.yaml
-        Output:
-            None
-        '''
-        with open(fname, 'r') as f:
-            data = yaml.load(f, Loader=yaml.SafeLoader)
-
-        self.ss = np.array(data['ss'][1:], dtype=np.float64)
-        self.invpol = np.array(data['invpol'][1:], dtype=np.float64)
-        self.shape = np.array(data['shape'], dtype=np.float64)
-        self.c, self.d, self.e = data['cde']
-        self.yc, self.xc = data['xy']
+        try:
+            self.ss = np.array(kwargs['ss'][1:], dtype=np.float64)
+            self.invpol = np.array(kwargs['invpol'][1:], dtype=np.float64)
+            self.shape = np.array(kwargs['shape'], dtype=np.float64)
+            self.c, self.d, self.e = kwargs['cde']
+            self.yc, self.xc = kwargs['xy']
+        except KeyError as ke:
+            print(f"Missing key {ke}")
+        except ValueError as ve:
+            print(f"Error Format!")
+            print(ve)
 
     def world2cam(self, point3D):
         '''
@@ -216,11 +235,16 @@ class SCARA_OCAM_MODEL(OCAM_MODEL):
         Output:
             img_rectified (numpy.ndarray) : Rectified panoramic image
         '''
-        # Create panoramic look up table
-        map_x, map_y = self.create_panoramic_undistortion_LUT(
-            Rmax, Rmin, new_img_size)
+
+        if not self.lut_pan:
+            # Create panoramic look up table
+            map_x, map_y = self.create_panoramic_undistortion_LUT(
+                Rmax, Rmin, new_img_size)
+            self.lut_pan = map_x, map_y
+        map_x, map_y = self.lut_pan
+
         # Remap into panoramic image
-        dst = cv.remap(src, map_x, map_y, cv.INTER_CUBIC)
+        dst = cv.remap(src, map_x, map_y, cv.INTER_NEAREST)
         # Rotate 180 degree to align ground to the bottom
         img_rectified = cv.rotate(dst, cv.ROTATE_180)
 
@@ -261,7 +285,7 @@ class SCARA_OCAM_MODEL(OCAM_MODEL):
         for i in range(4):
             front = rotated[:489, 608:]
             # cv.imwrite(f"front{i}.jpg", front)
-            res_90 = cv.remap(front, mapx_90, mapy_90, cv.INTER_CUBIC)
+            res_90 = cv.remap(front, mapx_90, mapy_90, cv.INTER_NEAREST)
             imgs.append(res_90)
             rotated = self.rotate_image(rotated, 90, (self.xc, self.yc))
 
@@ -270,35 +294,29 @@ class SCARA_OCAM_MODEL(OCAM_MODEL):
         return imgs, all_img
 
 
-class MEI_OCAM_MODEL(object):
+class MEI_OCAM_MODEL(OCAM_MODEL):
     '''
     Mei Ocam model from opencv. 
     Default calibration parameters is stored in mei.yaml
     '''
 
-    def __init__(self, fname=""):
+    def __init__(self, **kwargs):
         self.K = np.zeros((3, 3))  # Intrinsic Matrix
         self.D = np.zeros((1, 4))  # Distortion coefficients [k1, k2, p1, p2]
         self.Xi = np.zeros((1, 1))  # Mei's Model coefficient
 
-        if fname != '':
-            self.read_result(fname)
+        self.LUT = None
 
-    def read_result(self, fname):
-        '''
-        Read config from file
+        try:
+            self.K = np.array(kwargs['K'], dtype=np.float64).reshape((3, 3))
+            self.D = np.array([kwargs['D']], dtype=np.float64)
+            self.Xi = np.array([kwargs['Xi']], dtype=np.float64)
+        except KeyError as ke:
+            print(f"Missing key {ke}")
 
-        Input:
-            fname (str) : path of mei.yaml
-        Output:
-            None
-        '''
-        with open(fname, 'r') as f:
-            data = yaml.load(f, Loader=yaml.SafeLoader)
-
-        self.K = np.array(data['K'], dtype=np.float64).reshape((3, 3))
-        self.D = np.array([data['D']], dtype=np.float64)
-        self.Xi = np.array([data['Xi']], dtype=np.float64)
+        except ValueError as ve:
+            print(f"Error Format!")
+            print(ve)
 
     def panoramic_rectify(self, src, new_img_size):
         '''
@@ -313,14 +331,56 @@ class MEI_OCAM_MODEL(object):
         # Rotated 180 to let the front fit in the middle
         r = np.array([[-1, 0, 0], [0, -1, 0], [0, 0, 1]], dtype=np.float64)
 
-        # Create panoramic look up table
-        map1, map2 = cv.omnidir.initUndistortRectifyMap(
-            self.K,
-            self.D,
-            self.Xi,
-            r, self.K, new_img_size, cv.CV_16SC2, cv.omnidir.RECTIFY_CYLINDRICAL)
-        # Rotated 180 to let the front fit in the middle
+        if not self.LUT:
+            # Create panoramic look up table
+            map1, map2 = cv.omnidir.initUndistortRectifyMap(
+                self.K,
+                self.D,
+                self.Xi,
+                r, self.K, new_img_size, cv.CV_16SC2, cv.omnidir.RECTIFY_CYLINDRICAL)
+            self.LUT = map1, map2
+        map1, map2 = self.LUT
 
-        dst = cv.remap(src, map1, map2, cv.INTER_CUBIC)
+        # Rotated 180 to let the front fit in the middle
+        dst = cv.remap(src, map1, map2, cv.INTER_NEAREST)
 
         return dst
+
+
+def panoramic_rectify(original_bgr, **kwargs):
+    model = kwargs.get('model', 'scara')
+    if model == 'scara':
+        try:
+            scara = SCARA_OCAM_MODEL(ss=kwargs['ss'], invpol=kwargs['invpol'],
+                                     shape=kwargs['shape'], cde=kwargs['cde'], xy=kwargs['xy'])
+        except KeyError as ke:
+            print(f"Missing key {ke}")
+            return
+
+        cropped, mask = scara.preprocess_img(original_bgr)
+        Rmin = kwargs.get('r2', 210)
+        Rmax = kwargs.get('r1', 490)
+
+        # TODO: Find a better cylinder radius, currently is (Rmax + Rmin)s / 2
+        res_scara = scara.panoramic_rectify(
+            cropped, Rmax, Rmin, (Rmax-Rmin, int((Rmax + Rmin) * np.pi)))
+        res_mask = scara.panoramic_rectify(
+            mask, Rmax, Rmin, (Rmax-Rmin, int((Rmax + Rmin) * np.pi)))
+
+        return res_scara, res_mask
+
+    elif model == 'mei':
+        try:
+            mei = MEI_OCAM_MODEL(K=kwargs['K'], D=kwargs['D'], Xi=kwargs['Xi'])
+        except KeyError as ke:
+            print(f"Missing key {ke}")
+            return
+
+        cropped, mask = mei.preprocess_img(original_bgr)
+        res_mei = mei.panoramic_rectify(cropped, (2900, 800))
+        res_mei_mask = mei.panoramic_rectify(mask, (2900, 800))
+
+        return res_mei, res_mei_mask
+
+    else:
+        print("Unsupported Model")
