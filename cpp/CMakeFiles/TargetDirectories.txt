@@ -1,0 +1,3 @@
+/home/kuan/LFI/omniunwrap/cpp/CMakeFiles/rebuild_cache.dir
+/home/kuan/LFI/omniunwrap/cpp/CMakeFiles/edit_cache.dir
+/home/kuan/LFI/omniunwrap/cpp/CMakeFiles/omniUnwrap.dir

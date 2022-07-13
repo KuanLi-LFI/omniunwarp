@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 2.8)
+project( omniUnwrap )
+find_package( OpenCV REQUIRED )
+include_directories( ${OpenCV_INCLUDE_DIRS} )
+add_executable( omniUnwrap main.cpp remap.cpp )
+target_link_libraries( omniUnwrap ${OpenCV_LIBS} )
