@@ -18,12 +18,12 @@ URL = 'https://github.com/KuanLi-LFI/omniunwrap'
 EMAIL = 'kuan.li@lfi.ai'
 AUTHOR = 'Kuan Li'
 REQUIRES_PYTHON = '>=3.6.0'
-VERSION = '0.1.1'
+VERSION = '0.1.2'
 
 # What packages are required for this module to be executed?
 REQUIRED = [
     # 'requests', 'maya', 'records',
-    'opencv-python', 'opencv-contrib-python', 'pyyaml'
+    'opencv-python',
 ]
 
 # What packages are optional?

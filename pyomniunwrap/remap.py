@@ -10,7 +10,6 @@ Reference:
 import cv2 as cv
 import math
 import numpy as np
-import yaml
 
 
 class OCAM_MODEL(object):
@@ -72,10 +71,9 @@ class OCAM_MODEL(object):
         Output:
             result (numpy.ndarray) : Rotated image
         '''
-        image_center = tuple(np.array(src.shape[1::-1]) / 2)
         rot_mat = cv.getRotationMatrix2D(center, angle, 1.0)
         result = cv.warpAffine(
-            src, rot_mat, src.shape[1::-1], flags=cv.INTER_NEAREST)
+            src, rot_mat, src.shape[1::-1], flags=cv.INTER_LINEAR)
         return result
 
 
@@ -101,16 +99,42 @@ class SCARA_OCAM_MODEL(OCAM_MODEL):
         self.lut_pan = None  # look up table for panoramic rectify
 
         try:
-            self.ss = np.array(kwargs['ss'][1:], dtype=np.float64)
-            self.invpol = np.array(kwargs['invpol'][1:], dtype=np.float64)
-            self.shape = np.array(kwargs['shape'], dtype=np.float64)
-            self.c, self.d, self.e = kwargs['cde']
-            self.yc, self.xc = kwargs['xy']
+            self.ss = np.array(kwargs['param']['ss'][1:], dtype=np.float64)
+            self.invpol = np.array(
+                kwargs['param']['invpol'][1:], dtype=np.float64)
+            self.shape = np.array(kwargs['param']['shape'], dtype=np.float64)
+            self.c, self.d, self.e = kwargs['param']['cde']
+            self.yc, self.xc = kwargs['param']['xy']
         except KeyError as ke:
             print(f"Missing key {ke}")
         except ValueError as ve:
             print(f"Error Format!")
             print(ve)
+
+    def cam2world(self, point2D):
+        invdet = 1 / (self.c - self.d * self.e)
+        xp = invdet*((point2D[0] - self.xc) - self.d*(point2D[1] - self.yc))
+        yp = invdet*(-self.e*(point2D[0] - self.xc) +
+                     self.c*(point2D[1] - self.yc))
+        # distance [pixels] of  the point from the image center
+        r = np.sqrt(xp*xp + yp*yp)
+        zp = self.ss[0]
+        r_i = 1
+
+        for i in range(len(self.ss)):
+            zp += r_i * self.ss[i]
+            r_i *= r
+
+        point3D = [0, 0, 0]
+
+        # normalize to unit norm
+        invnorm = 1 / np.sqrt(xp*xp + yp*yp + zp*zp)
+        # project onto unit sphere
+        point3D[0] = invnorm*xp
+        point3D[1] = invnorm*yp
+        point3D[2] = invnorm*zp
+
+        return point3D
 
     def world2cam(self, point3D):
         '''
@@ -150,6 +174,20 @@ class SCARA_OCAM_MODEL(OCAM_MODEL):
             v = self.xc
 
         return u, v
+
+    def create_LUT_wrap(self, Rmax, Rmin, height, width):
+        mapx = np.zeros((height, width), dtype=np.float32)
+        mapy = np.zeros((height, width), dtype=np.float32)
+
+        for i in range(height):
+            for j in range(width):
+                # Note, if you would like to flip the image, just inverte the sign of theta
+                theta = (j) / width*2 * math.pi
+                rho = Rmax - (Rmax-Rmin) / height * i
+                mapx[i][j] = self.xc + rho * math.sin(theta)
+                mapy[i][j] = self.yc + rho * math.cos(theta)
+
+        return mapx, mapy
 
     def create_LUT_90(self, R, H):
         '''
@@ -244,7 +282,7 @@ class SCARA_OCAM_MODEL(OCAM_MODEL):
         map_x, map_y = self.lut_pan
 
         # Remap into panoramic image
-        dst = cv.remap(src, map_x, map_y, cv.INTER_NEAREST)
+        dst = cv.remap(src, map_x, map_y, cv.INTER_LINEAR)
         # Rotate 180 degree to align ground to the bottom
         img_rectified = cv.rotate(dst, cv.ROTATE_180)
 
@@ -259,8 +297,7 @@ class SCARA_OCAM_MODEL(OCAM_MODEL):
         Input:
             src (numpy.ndarray) : Input omnidirectional image
         Output:
-            imgs (list[numpy.ndarray]) : Perspective images
-            all_image (numpy.ndarray) : Concatenated image
+            imgs (list[numpy.ndarray]) : Perspective images (left, front, right, back, all)
         '''
         # Rotate to align front to the middle
         rotated = self.rotate_image(src, 225, (self.xc, self.yc))
@@ -285,13 +322,14 @@ class SCARA_OCAM_MODEL(OCAM_MODEL):
         for i in range(4):
             front = rotated[:489, 608:]
             # cv.imwrite(f"front{i}.jpg", front)
-            res_90 = cv.remap(front, mapx_90, mapy_90, cv.INTER_NEAREST)
+            res_90 = cv.remap(front, mapx_90, mapy_90, cv.INTER_LINEAR)
             imgs.append(res_90)
             rotated = self.rotate_image(rotated, 90, (self.xc, self.yc))
 
-        all_img = np.concatenate(imgs, axis=1)
+        concatenated_img = np.concatenate(imgs, axis=1)
+        imgs.append(concatenated_img)
 
-        return imgs, all_img
+        return imgs
 
 
 class MEI_OCAM_MODEL(OCAM_MODEL):
@@ -308,9 +346,10 @@ class MEI_OCAM_MODEL(OCAM_MODEL):
         self.LUT = None
 
         try:
-            self.K = np.array(kwargs['K'], dtype=np.float64).reshape((3, 3))
-            self.D = np.array([kwargs['D']], dtype=np.float64)
-            self.Xi = np.array([kwargs['Xi']], dtype=np.float64)
+            self.K = np.array(kwargs['param']['K'],
+                              dtype=np.float64).reshape((3, 3))
+            self.D = np.array([kwargs['param']['D']], dtype=np.float64)
+            self.Xi = np.array([kwargs['param']['Xi']], dtype=np.float64)
         except KeyError as ke:
             print(f"Missing key {ke}")
 
@@ -342,17 +381,27 @@ class MEI_OCAM_MODEL(OCAM_MODEL):
         map1, map2 = self.LUT
 
         # Rotated 180 to let the front fit in the middle
-        dst = cv.remap(src, map1, map2, cv.INTER_NEAREST)
+        dst = cv.remap(src, map1, map2, cv.INTER_LINEAR)
 
         return dst
 
 
 def panoramic_rectify(original_bgr, **kwargs):
+    '''
+    Unwrap an omnidirectional into panoramic image 
+
+    By default, the model used is Scaramuzza's model and cuboid unwrap method
+
+    Input:
+        original_bgr (numpy.ndarray) : Input omnidirectional image
+    Output:
+        scara_res  (list[numpy.ndarray]) : Perspective images (left, front, right, back, all)
+        scara_mask (list[numpy.ndarray]) : Mask of images (left, front, right, back, all)
+    '''
     model = kwargs.get('model', 'scara')
     if model == 'scara':
         try:
-            scara = SCARA_OCAM_MODEL(ss=kwargs['ss'], invpol=kwargs['invpol'],
-                                     shape=kwargs['shape'], cde=kwargs['cde'], xy=kwargs['xy'])
+            scara = SCARA_OCAM_MODEL(param=kwargs['param'])
         except KeyError as ke:
             print(f"Missing key {ke}")
             return
@@ -361,17 +410,22 @@ def panoramic_rectify(original_bgr, **kwargs):
         Rmin = kwargs.get('r2', 210)
         Rmax = kwargs.get('r1', 490)
 
-        # TODO: Find a better cylinder radius, currently is (Rmax + Rmin)s / 2
-        res_scara = scara.panoramic_rectify(
-            cropped, Rmax, Rmin, (Rmax-Rmin, int((Rmax + Rmin) * np.pi)))
-        res_mask = scara.panoramic_rectify(
-            mask, Rmax, Rmin, (Rmax-Rmin, int((Rmax + Rmin) * np.pi)))
+        unwrap_method = kwargs.get('unwrap method', 'cuboid')
 
-        return res_scara, res_mask
+        if unwrap_method == 'cylinder':
+            scara_res = scara.panoramic_rectify(
+                cropped, Rmax, Rmin, (Rmax-Rmin, int((Rmax + Rmin) * np.pi)))
+            scara_mask = scara.panoramic_rectify(
+                mask, Rmax, Rmin, (Rmax-Rmin, int((Rmax + Rmin) * np.pi)))
+        elif unwrap_method == 'cuboid':
+            scara_res = scara.cuboid_rectify(cropped)
+            scara_mask = scara.cuboid_rectify(mask)
+
+        return scara_res, scara_mask
 
     elif model == 'mei':
         try:
-            mei = MEI_OCAM_MODEL(K=kwargs['K'], D=kwargs['D'], Xi=kwargs['Xi'])
+            mei = MEI_OCAM_MODEL(param=kwargs['param'])
         except KeyError as ke:
             print(f"Missing key {ke}")
             return
