@@ -12,13 +12,13 @@ from shutil import rmtree
 from setuptools import find_packages, setup, Command
 
 # Package meta-data.
-NAME = 'pyomniunwrap'
+NAME = 'pyomniunwarp'
 DESCRIPTION = 'A simple tool for unwrapping 360 degrees omnidirectional images.'
-URL = 'https://github.com/KuanLi-LFI/omniunwrap'
+URL = 'https://github.com/KuanLi-LFI/omniunwarp'
 EMAIL = 'kuan.li@lfi.ai'
 AUTHOR = 'Kuan Li'
 REQUIRES_PYTHON = '>=3.6.0'
-VERSION = '0.1.2'
+VERSION = '0.2.0'
 
 # What packages are required for this module to be executed?
 REQUIRED = [
