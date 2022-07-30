@@ -33,7 +33,7 @@ import pyomniunwarp.example
 pyomniunwarp.example.run_example()
 ```
 
-To use the calibrated model in python, prepare `calib_results.txt` from [OCamCalib toolbox](https://sites.google.com/site/scarabotix/ocamcalib-omnidirectional-camera-calibration-toolbox-for-matlab). Edit `calib_results.txt` as the following example [here](/data/calib_results.txt)
+To use the calibrated model in python, prepare `calib_results.txt` from [OCamCalib toolbox](https://sites.google.com/site/scarabotix/ocamcalib-omnidirectional-camera-calibration-toolbox-for-matlab). Edit `calib_results.txt` as the following example [here](/pyomniunwarp/data/calib_results.txt)
 
 Put `calib_results.txt` under the same folder with the python script
 
