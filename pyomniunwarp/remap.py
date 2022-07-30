@@ -50,6 +50,7 @@ class ScaramuzzaOcamModel():
             self.shape = np.array(kwargs['param']['shape'], dtype=np.float64)
             self.c, self.d, self.e = kwargs['param']['cde']
             self.yc, self.xc = kwargs['param']['xy']
+            self.Rmax, self.Rmin = kwargs['param']['R']
         except KeyError as ke:
             print(f"Missing key {ke}")
         except ValueError as ve:
@@ -179,7 +180,7 @@ class ScaramuzzaOcamModel():
 
         return mapx, mapy
 
-    def create_LUT_cuboid(self):
+    def create_LUT_cuboid(self, FOV_angle=90):
         '''
         Create Look Up Table (LUT) for remapping omnidirectional image into cuboid panorama image
 
@@ -193,12 +194,14 @@ class ScaramuzzaOcamModel():
         depression_angle = self.get_ray_angle(self.Rmin)
 
         height = self.Rmax - self.Rmin
-        # w = 2h / (tan(theta1) + tan(theta2))
-        width = height * 2 / \
+
+        # R = distance from image plane to the optical center
+        # R = h * tan(theta1) + h * tan(theta2)
+        # width = R * tan(FOV/2) * 2
+        R = height / \
             (np.tan(np.deg2rad(elevation_angle)) +
              np.tan(np.deg2rad(-depression_angle)))
-
-        R = width / 2
+        width = R * np.tan(np.deg2rad(FOV_angle / 2)) * 2
 
         z_offset = R * np.tan(np.deg2rad(elevation_angle))
 
@@ -211,31 +214,32 @@ class ScaramuzzaOcamModel():
         maps = []
 
         #    front, right, back, left
-        # x:   j-R,     R,  R-j,   -R
-        # y:     R,   R-j,   -R,  j-R
+        # x:   j-w,     R,  w-j,   -R
+        # y:     R,   w-j,   -R,  j-w
         #
-        def get_project_coord(index, j, R):
+        def get_project_coord(index, j, width, R):
+            w = width / 2
             if index == 0:
-                return (j-R, R)
+                return (j-w, R)
             elif index == 1:
-                return (R, R-j)
+                return (R, w-j)
             elif index == 2:
-                return (R-j, -R)
+                return (w-j, -R)
             elif index == 3:
-                return (-R, j-R)
+                return (-R, j-w)
 
         for k in range(4):
             for i in range(height):
                 for j in range(width):
                     # Transform the dst image coordinate to XYZ coordinate
-                    x, y = get_project_coord(k, j, R)
+                    x, y = get_project_coord(k, j, width, R)
                     z = z_offset - i
 
                     # Reproject onto image pixel coordinate
                     u, v = self.world2cam([-y, x, z])
 
-                    mapx[i][j] = min(max(0, u), self.shape[1])
-                    mapy[i][j] = min(max(0, v), self.shape[0])
+                    mapx[i][j] = u
+                    mapy[i][j] = v
 
             maps.append([mapx.copy(), mapy.copy()])
 
@@ -330,12 +334,12 @@ class ScaramuzzaOcamModel():
         return imgs
 
 
-class OmniUnwrap():
+class OmniUnwarp():
     '''
     User interface for unwarpping images
     '''
 
-    def __init__(self, calib_results_path="calib_results.txt"):
+    def __init__(self, **kwargs):
 
         self.model = None  # Scaramuzza model
 
@@ -362,19 +366,31 @@ class OmniUnwrap():
                        0.200601],
             'shape': [1080.0, 1300.0],
             'ss': [5.0, -266.588, 0.0, 0.001220001, -5.78173e-07, 2.003631e-09],
-            'xy': [545.872616, 674.318875]
+            'xy': [545.872616, 674.318875],
+            'crop_pixel': [300, 320],
+            'R': [600, 200]
         }
 
-        if self.read_calib_results(calib_results_path):
+        self.mode = kwargs.get('mode', 'cuboid')
+        self.version = kwargs.get('version', '0.0.1')
+
+        if self.read_calib_results(kwargs.get('calib_results_path', '')):
             self.model = ScaramuzzaOcamModel(param=self.calib_results)
         else:
             print("Using default value!")
             self.model = ScaramuzzaOcamModel(param=self.scara_default_param)
 
+        mask = self.create_mask()
+        self.model.create_LUT_cylinder()
+        self.model.create_LUT_cuboid()
+        self.model.mask_cylinder = self.model.cylinder_rectify(mask)
+        self.model.mask_cuboid = self.model.cuboid_rectify(mask)
+
     def read_calib_results(self, calib_results_path):
         '''
         Read calib_results.txt from Matlab calibration
         '''
+
         try:
             with open(calib_results_path, 'r') as f:
                 lines = f.readlines()
@@ -388,8 +404,13 @@ class OmniUnwrap():
             'invpol': split_by_comma(lines[6]),
             'xy': split_by_comma(lines[10]),
             'cde': split_by_comma(lines[14]),
-            'shape': split_by_comma(lines[18])
+            'shape': split_by_comma(lines[18]),
+            'R': split_by_comma(lines[22])
         }
+
+        pixel = split_by_comma(lines[26])
+        self.left_cropped_pixel, self.right_copped_pixel = int(
+            pixel[0]), int(pixel[1])
         return True
 
     def crop_img(self, src):
@@ -450,60 +471,60 @@ class OmniUnwrap():
             src, rot_mat, src.shape[1::-1], flags=cv.INTER_LINEAR)
         return result
 
-    def initialize(self, left_cropped_pixel, right_cropped_pixel, Rmax, Rmin):
-        '''
-        1. Initialize model
-        2. Create mapping function
-        3. Create mask
-
-        Input:
-            left_cropped_pixel (int)    : pixel cropped on the left side from the original image
-            right_cropped_pixel (int)   : pixel cropped on the right side from the original image
-            Rmax (int)                  : The maximum radius from the image center in calib_results
-            Rmin (int)                  : The minimum radius from the image center in calib_results
-        Output:
-            None
-        '''
-        self.left_cropped_pixel = left_cropped_pixel
-        self.right_copped_pixel = right_cropped_pixel
-        self.model.Rmax = Rmax
-        self.model.Rmin = Rmin
-
-        mask = self.create_mask()
-        self.model.create_LUT_cylinder()
-        self.model.create_LUT_cuboid()
-        self.model.mask_cylinder = self.model.cylinder_rectify(mask)
-        self.model.mask_cuboid = self.model.cuboid_rectify(mask)
-
     def cuboid_rectify(self, src):
         '''
-        Perform cuboid unwarp and return the unwarped image and mask
+        Perform cuboid unwarp and return the unwarped image, mask, and label
 
         Input:
             src (numpy.ndarray) : Input image, default size is (1920, 1080)
         Output:
-            imgs  (list[numpy.ndarray]) : Total 5 unwarped images, including 4 seperate images and full image [front, right, back, left, full]
-            masks (list[numpy.ndarray]) : Masks for corresponding imgs [front, right, back, left, full]
+            imgs   (list[numpy.ndarray]) : Total 5 unwarped images, including 4 seperate images and full image [front, right, back, left, full]
+            masks  (list[numpy.ndarray]) : Masks for corresponding imgs [front, right, back, left, full]
+            labels (list[str])           : Labels of corresponding imgs [front, right, back, left, full]
         '''
 
         cropped = self.crop_img(src)
         imgs = self.model.cuboid_rectify(
             cropped)
         masks = self.model.mask_cuboid
+        labels = ['front', 'right', 'back', 'left', 'full']
 
-        return imgs, masks
+        return imgs, masks, labels
 
     def cylinder_rectify(self, src):
         '''
-        Perform cylinder unwarp and return the unwarped image and mask
+        Perform cylinder unwarp and return the unwarped image, mask, and label
 
         Input:
             src (numpy.ndarray) : Input image, default size is (1920, 1080)
         Output:
             imgs  (list[numpy.ndarray]) : 1 unwarped image [full]
             masks (list[numpy.ndarray]) : Mask for corresponding imgs [full]
+            labels (list[str])          : Labels of corresponding imgs [full]
         '''
         cropped = self.crop_img(src)
         imgs = self.model.cylinder_rectify(cropped)
         masks = self.model.mask_cylinder
-        return imgs, masks
+        labels = ['full']
+
+        return imgs, masks, labels
+
+    def rectify(self, src):
+        '''
+        Perform unwarp with corresponding mode and return the unwarped image, mask, and label
+        Mode is specified in the parameters
+
+        Input:
+            src (numpy.ndarray) : Input image, default size is (1920, 1080)
+        Output:
+            imgs  (list[numpy.ndarray]) : 1 unwarped image [full]
+            masks (list[numpy.ndarray]) : Mask for corresponding imgs [full]
+            labels (list[str])          : Labels of corresponding imgs [full]
+        '''
+        if self.mode == 'cuboid':
+            return self.cuboid_rectify(src)
+        elif self.mode == 'cylinder':
+            return self.cylinder_rectify(src)
+        else:
+            print("Please specify rectify mode")
+            return [], [], []

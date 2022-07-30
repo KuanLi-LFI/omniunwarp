@@ -18,3 +18,10 @@
 
 1080 1300
 
+#ROI max min radius
+
+600 235
+
+#left right cropped pixel
+
+300 320

@@ -13,9 +13,10 @@ The result of cylinder unwrap method will be saved in "scara.jpg".
 The result of cuboid unwrap method will be saved in "cuboid.jpg" and "perspective_X.jpg".
 '''
 
-from pyomniunwarp import OmniUnwrap
+from pyomniunwarp import OmniUnwarp
 import cv2 as cv
 import pkg_resources
+from pathlib import Path
 
 
 def run_example():
@@ -32,34 +33,30 @@ def run_example():
     # Read the image
     original_img = cv.imread(example_image_path)
 
-    # Initialize the model, this would take some time
-    # Input the path to calib_results.txt
-    unwarper = OmniUnwrap(calib_results_path)
-    '''
-    Input:
-            left_cropped_pixel (int)    : pixel cropped on the left side from the original image
-            right_cropped_pixel (int)   : pixel cropped on the right side from the original image
-            Rmax (int)                  : The maximum radius from the image center in calib_results
-            Rmin (int)                  : The minimum radius from the image center in calib_results
-    '''
-    unwarper.initialize(300, 320, 600, 235)
+    # Prepare the parameters and calib_results.txt
+    # Define the mode here
+    kwargs = {
+        "mode": "cuboid",   # cuboid or cylinder
+        "version": "0.2.1",  # https://pypi.org/project/pyomniunwarp/
+        "calib_results_path": calib_results_path
+    }
 
+    # Initialize the model, this would take some time
+    unwarper = OmniUnwarp(**kwargs)
+
+    # New API
+    imgs, masks, labels = unwarper.rectify(original_img)
+
+    # Old API, call the rectify function seperately
     # Unwarp using cylinder and cuboid projection
-    # Return list of img and mask
-    cyl, cyl_mask = unwarper.cylinder_rectify(original_img)
-    cub, cub_mask = unwarper.cuboid_rectify(original_img)
+    # Return list of img, mask, and label
+    cyl, cyl_mask, cyl_label = unwarper.cylinder_rectify(original_img)
+    cub, cub_mask, cub_label = unwarper.cuboid_rectify(original_img)
 
     # Save the images
-    for index, img in enumerate(cyl):
-        masked = cv.bitwise_and(img, img, mask=cyl_mask[index])
-        cv.imwrite(f"cylinder.jpg", img)
-        cv.imwrite(f"cylinder_maksed.jpg", masked)
-
-    name = ("left", "front", "right", "back", "full")
-    for index, img in enumerate(cub):
-        masked = cv.bitwise_and(img, img, mask=cub_mask[index])
-        cv.imwrite(f"cuboid_{name[index]}.jpg", img)
-        cv.imwrite(f"cuboid_maksed_{name[index]}.jpg", masked)
+    for index, img in enumerate(imgs):
+        masked = cv.bitwise_and(img, img, mask=masks[index])
+        cv.imwrite(f"{labels[index]}.jpg", masked)
 
 
 if __name__ == "__main__":
