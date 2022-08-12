@@ -36,7 +36,7 @@ kwargs = {
 | F         | Front-Left    |
 | G         | Front-Right   |
 
-![ROI](/omniunwarp/doc/fov.png)
+![ROI](/doc/fov.png)
 
 ## Version Specification
 
