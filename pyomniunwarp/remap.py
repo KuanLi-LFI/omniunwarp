@@ -6,7 +6,6 @@ Reference:
 2.  https://docs.opencv.org/4.x/dd/d12/tutorial_omnidir_calib_main.html
 '''
 
-
 import cv2 as cv
 import math
 import numpy as np
@@ -38,8 +37,8 @@ class ScaramuzzaOcamModel():
         self.LUT_cuboid = None      # look up table for cuboid rectify
 
         self.mask_ring = None       # mask of ring image
-        # mask of cuboid image [front, right, back, left, full]
-        self.mask_cuboid = None
+        # mask of cuboid image [front, right, back, left, full, front-left, front-right]
+        self.mask_cuboid_plus = None
         self.mask_cylinder = None   # mask of cylinder image
 
         # Read parameters
@@ -187,7 +186,7 @@ class ScaramuzzaOcamModel():
         Input:
             None
         Output:
-            maps (list[list[numpy.ndarray]]) : list of [mapx, mapy] in 4 directions
+            maps (list[list[numpy.ndarray]]) : list of [mapx, mapy] in 4 directions and front left, front right
         '''
 
         elevation_angle = self.get_ray_angle(self.Rmax)
@@ -213,12 +212,13 @@ class ScaramuzzaOcamModel():
 
         maps = []
 
-        #    front, right, back, left
-        # x:   j-w,     R,  w-j,   -R
-        # y:     R,   w-j,   -R,  j-w
+        #    front, right, back, left, front left,             front right
+        # x:   j-w,     R,  w-j,   -R, sqrt2/2 * j - sqrt2 * R, sqrt2/2 * j
+        # y:     R,   w-j,   -R,  j-w, sqrt2/2 * j            , sqrt2 * R - sqrt2 / 2 * j
         #
         def get_project_coord(index, j, width, R):
             w = width / 2
+            sqrt2 = np.math.sqrt(2)
             if index == 0:
                 return (j-w, R)
             elif index == 1:
@@ -227,8 +227,12 @@ class ScaramuzzaOcamModel():
                 return (w-j, -R)
             elif index == 3:
                 return (-R, j-w)
+            elif index == 4:
+                return (sqrt2 / 2 * j - sqrt2 * R, sqrt2 / 2 * j)
+            elif index == 5:
+                return (sqrt2 / 2 * j, sqrt2 * R - sqrt2 / 2 * j)
 
-        for k in range(4):
+        for k in range(6):
             for i in range(height):
                 for j in range(width):
                     # Transform the dst image coordinate to XYZ coordinate
@@ -312,7 +316,7 @@ class ScaramuzzaOcamModel():
 
     def cuboid_rectify(self, src):
         '''
-        Rectify omnidirectional image into cylinder panorama image
+        Rectify omnidirectional image into cuboid panorama image
 
         Input:
             src (numpy.ndarray) : Input omnidirectional ring image
@@ -324,12 +328,47 @@ class ScaramuzzaOcamModel():
             self.LUT_cuboid = self.create_LUT_cuboid()
         cuboid_maps = self.LUT_cuboid
 
-        mapx_all = np.concatenate([m[0] for m in cuboid_maps], axis=1)
-        mapy_all = np.concatenate([m[1] for m in cuboid_maps], axis=1)
+        mapx_all = np.concatenate([m[0] for m in cuboid_maps[:4]], axis=1)
+        mapy_all = np.concatenate([m[1] for m in cuboid_maps[:4]], axis=1)
 
         full = cv.remap(src, mapx_all, mapy_all,
                         cv.INTER_LINEAR, cv.BORDER_CONSTANT, 0)
         imgs = self.split_cuboid_image(full)
+
+        return imgs
+
+    def cuboid_rectify_plus(self, src):
+        '''
+        Rectify omnidirectional image into cuboid panorama image and front-left, front-right perspective image
+
+        Input:
+            src (numpy.ndarray) : Input omnidirectional ring image
+        Output:
+            imgs (list[numpy.ndarray]) : 6 seperate images and full image [front, right, back, left, full, front-left, front-right]
+        '''
+
+        if not self.LUT_cuboid:
+            self.LUT_cuboid = self.create_LUT_cuboid()
+        cuboid_maps = self.LUT_cuboid
+
+        # 4 directions rectify
+        mapx_full = np.concatenate([m[0] for m in cuboid_maps[:4]], axis=1)
+        mapy_full = np.concatenate([m[1] for m in cuboid_maps[:4]], axis=1)
+        img_full = cv.remap(src, mapx_full, mapy_full,
+                            cv.INTER_LINEAR, cv.BORDER_CONSTANT, 0)
+        imgs = self.split_cuboid_image(img_full)
+
+        # front-left and front-right rectify
+        mapx_45 = np.concatenate([m[0] for m in cuboid_maps[4:]], axis=1)
+        mapy_45 = np.concatenate([m[1] for m in cuboid_maps[4:]], axis=1)
+        img_45 = cv.remap(src, mapx_45, mapy_45,
+                          cv.INTER_LINEAR, cv.BORDER_CONSTANT, 0)
+
+        width = cuboid_maps[0][0].shape[1]
+        front_left = img_45[:, :width]
+        front_right = img_45[:, width:width*2]
+
+        imgs.extend([front_left, front_right])
 
         return imgs
 
@@ -372,7 +411,7 @@ class OmniUnwarp():
         }
 
         self.mode = kwargs.get('mode', 'cuboid')
-        self.version = kwargs.get('version', '0.0.1')
+        self.version = kwargs.get('version', '0.2.2')
 
         if self.read_calib_results(kwargs.get('calib_results_path', '')):
             self.model = ScaramuzzaOcamModel(param=self.calib_results)
@@ -384,7 +423,7 @@ class OmniUnwarp():
         self.model.create_LUT_cylinder()
         self.model.create_LUT_cuboid()
         self.model.mask_cylinder = self.model.cylinder_rectify(mask)
-        self.model.mask_cuboid = self.model.cuboid_rectify(mask)
+        self.model.mask_cuboid_plus = self.model.cuboid_rectify_plus(mask)
 
     def read_calib_results(self, calib_results_path):
         '''
@@ -474,20 +513,37 @@ class OmniUnwarp():
     def cuboid_rectify(self, src):
         '''
         Perform cuboid unwarp and return the unwarped image, mask, and label
+        Version 0.2.1: Cuboid rectify, return [front, right, back, left, full]
+        Version 0.2.2: Cuboid rectify plus, return [front, right, back, left, full, front-left, front-right]
 
         Input:
             src (numpy.ndarray) : Input image, default size is (1920, 1080)
         Output:
-            imgs   (list[numpy.ndarray]) : Total 5 unwarped images, including 4 seperate images and full image [front, right, back, left, full]
-            masks  (list[numpy.ndarray]) : Masks for corresponding imgs [front, right, back, left, full]
-            labels (list[str])           : Labels of corresponding imgs [front, right, back, left, full]
+            imgs   (list[numpy.ndarray]) : Total 5 (7) unwarped images, including 4 seperate images and full image 
+                                           [front, right, back, left, full, (front-left, front-right)]
+            masks  (list[numpy.ndarray]) : Masks for corresponding imgs [front, right, back, left, full, (front-left, front-right)]
+            labels (list[str])           : Labels of corresponding imgs [front, right, back, left, full, (front-left, front-right)]
         '''
 
         cropped = self.crop_img(src)
-        imgs = self.model.cuboid_rectify(
-            cropped)
-        masks = self.model.mask_cuboid
-        labels = ['front', 'right', 'back', 'left', 'full']
+
+        if self.version == '0.2.1':
+            # cuboid
+            imgs = self.model.cuboid_rectify(cropped)
+            masks = self.model.mask_cuboid_plus[:5]
+            labels = ['front', 'right', 'back', 'left', 'full']
+        elif self.version == '0.2.2':
+            # cuboid + front-left + front-right
+            imgs = self.model.cuboid_rectify_plus(cropped)
+            masks = self.model.mask_cuboid_plus
+            labels = ['front', 'right', 'back', 'left',
+                      'full', 'front-left', 'front-right']
+        else:
+            # default using cuboid rectify plus
+            imgs = self.cuboid_rectify_plus(src)
+            masks = self.model.mask_cuboid_plus
+            labels = ['front', 'right', 'back', 'left',
+                      'full', 'front-left', 'front-right']
 
         return imgs, masks, labels
 
