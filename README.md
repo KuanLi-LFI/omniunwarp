@@ -32,7 +32,7 @@ kwargs = {
 | B         | Right         |
 | C         | Back          |
 | D         | Left          |
-| E         | Full(A+B+C+D) |
+| E         | Full(B+C+D+A) |
 | F         | Front-Left    |
 | G         | Front-Right   |
 
@@ -40,8 +40,8 @@ kwargs = {
 
 ## Version Specification
 
-In version 0.2.1, default ROI is (A, B, C, D, E)  
-In version 0.2.2, default ROI is (A, B, C, D, E, F, G)
+In version 0.2.1, default ROI is (A, D, C, B, E)  
+In version 0.2.2 and later, default ROI is (A, D, C, B, E, F, G)
 
 ## Usage
 
@@ -61,7 +61,7 @@ Then in python, import as
 ```
 from pyomniunwarp import OmniUnwarp
 
-unwarper = OmniUnwrap(**kwargs)
+unwarper = OmniUnwarp(**kwargs)
 ```
 
 Initialize will take several seconds. After the initializtion, perform unwarping by
