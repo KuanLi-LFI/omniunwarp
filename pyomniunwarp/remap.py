@@ -207,25 +207,25 @@ class ScaramuzzaOcamModel():
 
         maps = []
 
-        #    front, left, back, right, front left,              front right
-        # x:   j-w,   -R,  w-j,     R, sqrt2/2 * j - sqrt2 * R, sqrt2/2 * j
-        # y:     R,  j-w,   -R,   w-j, sqrt2/2 * j            , sqrt2 * R - sqrt2 / 2 * j
+        #     front,  left, back, right,  front left,                front right
+        # x:      R,   j-w,   -R,   w-j,  sqrt2/2 * j,               sqrt2 * R - sqrt2 / 2 * j
+        # y:    w-j,     R,  j-w,    -R,  sqrt2 * R - sqrt2 / 2 * j, - sqrt2/2 * j
         #
         def get_project_coord(index, j, width, R):
             w = width / 2
             sqrt2 = np.math.sqrt(2)
             if index == 0:
-                return (j-w, R)
-            elif index == 1:
-                return (-R, j-w)
-            elif index == 2:
-                return (w-j, -R)
-            elif index == 3:
                 return (R, w-j)
+            elif index == 1:
+                return (j-w, R)
+            elif index == 2:
+                return (-R, j-w)
+            elif index == 3:
+                return (w-j, -R)
             elif index == 4:
-                return (sqrt2 / 2 * j - sqrt2 * R, sqrt2 / 2 * j)
-            elif index == 5:
                 return (sqrt2 / 2 * j, sqrt2 * R - sqrt2 / 2 * j)
+            elif index == 5:
+                return (sqrt2 * R - sqrt2 / 2 * j, - sqrt2 / 2 * j)
 
         for k in range(6):
             for i in range(height):
