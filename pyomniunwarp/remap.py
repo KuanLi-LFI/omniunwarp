@@ -537,7 +537,7 @@ class OmniUnwarp():
                       'full', 'front-left', 'front-right']
         else:
             # default using cuboid rectify plus
-            imgs = self.cuboid_rectify_plus(src)
+            imgs = self.model.cuboid_rectify_plus(cropped)
             masks = self.model.mask_cuboid_plus
             labels = ['front', 'left', 'back', 'right',
                       'full', 'front-left', 'front-right']
